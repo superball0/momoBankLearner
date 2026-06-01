@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.spec
+
+# uv / venv
+.venv/
+uv.lock
+
+# 临时文件
+.tmp/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 历史记录（本地配置）
+.history.json
+
+# PyInstaller 打包产物
+dist/
+build/
+
+# 旧的 tkinter 文件（已弃用）
+screenshot_tool.py
+image_annotator.py
