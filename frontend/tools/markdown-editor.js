@@ -15,6 +15,9 @@
 
 import { createEl, uid } from '/static/tools/utils.js';
 
+// Internal clipboard for cross-editor image copy/paste
+let _internalClipboard = null;  // { blob: Blob, timestamp: number }
+
 export class MarkdownEditor {
     /**
      * @param {HTMLElement} container
@@ -155,6 +158,118 @@ export class MarkdownEditor {
             this._handlePaste(e);
         };
         this.editable.addEventListener('paste', this._onPaste);
+
+        // Right-click on images: copy to clipboard
+        this._onContextMenu = (e) => {
+            const img = e.target.closest('img');
+            if (!img) return;
+            e.preventDefault();
+            this._showImageContextMenu(e, img);
+        };
+        this.editable.addEventListener('contextmenu', this._onContextMenu);
+
+        // Copy: include images as blobs
+        this._onCopy = (e) => {
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed) return;
+            // Check if selection contains an image
+            const range = sel.getRangeAt(0);
+            const frag = range.cloneContents();
+            const imgs = frag.querySelectorAll('img');
+            if (imgs.length === 0) return; // default text copy is fine
+            // For single image selection, copy as image
+            if (imgs.length === 1 && !frag.textContent.trim()) {
+                e.preventDefault();
+                const imgEl = this.editable.querySelector(`img[data-img-id="${imgs[0].dataset.imgId}"]`);
+                if (imgEl) this._copyImageToClipboard(imgEl);
+            }
+        };
+        this.editable.addEventListener('copy', this._onCopy);
+    }
+
+    /** Show context menu for image right-click */
+    _showImageContextMenu(e, img) {
+        // Remove existing menu
+        document.querySelectorAll('.md-context-menu').forEach(m => m.remove());
+
+        const menu = createEl('div', { class: 'md-context-menu' });
+        menu.style.position = 'fixed';
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+
+        const copyBtn = createEl('div', {
+            class: 'md-context-item',
+            textContent: '📋 复制图片',
+            events: {
+                click: () => {
+                    this._copyImageToClipboard(img);
+                    menu.remove();
+                },
+            },
+        });
+        menu.appendChild(copyBtn);
+
+        const deleteBtn = createEl('div', {
+            class: 'md-context-item md-context-danger',
+            textContent: '🗑 删除图片',
+            events: {
+                click: () => {
+                    const imgId = img.dataset.imgId;
+                    if (imgId) this.imageStore.delete(imgId);
+                    if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+                    img.remove();
+                    menu.remove();
+                },
+            },
+        });
+        menu.appendChild(deleteBtn);
+
+        document.body.appendChild(menu);
+
+        // Close on click outside
+        const closeMenu = (ev) => {
+            if (!menu.contains(ev.target)) {
+                menu.remove();
+                document.removeEventListener('mousedown', closeMenu);
+            }
+        };
+        setTimeout(() => document.addEventListener('mousedown', closeMenu), 0);
+    }
+
+    /** Copy image element to clipboard (internal + system) */
+    async _copyImageToClipboard(img) {
+        try {
+            const imgId = img.dataset.imgId;
+            let blob = imgId ? this.imageStore.get(imgId) : null;
+            if (!blob) {
+                const resp = await fetch(img.src);
+                blob = await resp.blob();
+            }
+
+            // Always store in internal clipboard (works reliably)
+            _internalClipboard = { blob: blob, timestamp: Date.now() };
+
+            // Try system clipboard too (may fail in pywebview)
+            try {
+                const bitmap = await createImageBitmap(blob);
+                const canvas = document.createElement('canvas');
+                canvas.width = bitmap.width;
+                canvas.height = bitmap.height;
+                canvas.getContext('2d').drawImage(bitmap, 0, 0);
+                canvas.toBlob(async (pngBlob) => {
+                    try {
+                        await navigator.clipboard.write([
+                            new ClipboardItem({ 'image/png': pngBlob }),
+                        ]);
+                    } catch (_) { /* ignore */ }
+                }, 'image/png');
+            } catch (_) { /* ignore */ }
+
+            const { showToast } = await import('/static/tools/utils.js');
+            showToast('图片已复制，可粘贴到其他编辑器', 'success', 1500);
+        } catch (err) {
+            console.error('Copy image failed:', err);
+        }
     }
 
     // ── Markdown shortcuts ────────────────────────────────
@@ -346,9 +461,33 @@ export class MarkdownEditor {
 
     // ── Paste handling ────────────────────────────────────
     _handlePaste(e) {
+        // 1. Check internal clipboard first (from right-click copy)
+        if (_internalClipboard && (Date.now() - _internalClipboard.timestamp < 300000)) {
+            const items = e.clipboardData?.items;
+            // If system clipboard has no image, use internal
+            let hasSystemImage = false;
+            if (items) {
+                for (const item of items) {
+                    if (item.type.startsWith('image/')) {
+                        hasSystemImage = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasSystemImage) {
+                e.preventDefault();
+                this.insertImage(_internalClipboard.blob);
+                _internalClipboard = null;
+                const { showToast } = { showToast: (msg) => {} };
+                import('/static/tools/utils.js').then(m => m.showToast('图片已粘贴', 'success', 1000));
+                return;
+            }
+        }
+
         const items = e.clipboardData?.items;
         if (!items) return;
 
+        // 2. Check system clipboard for images
         for (const item of items) {
             if (item.type.startsWith('image/')) {
                 e.preventDefault();
@@ -363,7 +502,7 @@ export class MarkdownEditor {
             }
         }
 
-        // For text paste, clean to plain text
+        // 3. For text paste, clean to plain text
         e.preventDefault();
         const text = e.clipboardData.getData('text/plain');
         document.execCommand('insertText', false, text);

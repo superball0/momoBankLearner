@@ -157,20 +157,24 @@ export function renderEntry(app) {
 
     container.appendChild(wrapper);
 
-    // Global screenshot shortcut: Ctrl+Shift+A
-    const _onGlobalKeydown = (e) => {
-        if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
-            e.preventDefault();
-            handleScreenshot();
-        }
+    // Expose global insert function for app.js screenshot shortcut
+    window.__entryInsertImage = (blob) => {
+        const editor = lastFocusedEditor || questionEditor;
+        if (editor) editor.insertImage(blob);
     };
-    document.addEventListener('keydown', _onGlobalKeydown);
 
-    // Store original navigate and clean up listener on navigation
+    // Check if there's a pending screenshot from global shortcut
+    if (app.state.pendingScreenshot) {
+        const blob = app.state.pendingScreenshot;
+        app.state.pendingScreenshot = null;
+        questionEditor.insertImage(blob);
+    }
+
+    // Clean up on navigation
     const _origNavigate = app.navigate.bind(app);
     app.navigate = (view, data) => {
-        document.removeEventListener('keydown', _onGlobalKeydown);
-        app.navigate = _origNavigate; // restore
+        window.__entryInsertImage = null;
+        app.navigate = _origNavigate;
         _origNavigate(view, data);
     };
 
