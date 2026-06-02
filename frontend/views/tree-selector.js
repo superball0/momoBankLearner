@@ -82,7 +82,9 @@ function injectStyles() {
         /* ── Row height override ──────────────────────── */
         .tree-node-row {
             min-height: 40px;
-            padding: 8px 12px !important;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            padding-right: 12px;
             font-size: 14px;
         }
 
@@ -379,13 +381,13 @@ function renderBranchTree() {
 function buildBranchNode(node, depth) {
     const el = createEl('div', { class: 'tree-node' });
     const hasChildren = node.children && node.children.length > 0;
-    let expanded = depth < 2; // 默认展开前两层
+    let expanded = depth < 1; // 只展开根节点
 
     // ── 行
     const row = createEl('div', {
         class: `tree-node-row ${selectedBranch === node.path ? 'selected' : ''}`,
     });
-    row.style.paddingLeft = `${10 + depth * 20}px`;
+    row.style.paddingLeft = `${12 + depth * 28}px`;
 
     // 箭头
     const arrow = createEl('span', {
@@ -487,7 +489,7 @@ function buildTagNode(name, children, parentPath, depth) {
     const el = createEl('div', { class: 'tree-node' });
     const childKeys = Object.keys(children || {});
     const hasChildren = childKeys.length > 0;
-    let expanded = depth < 2;
+    let expanded = depth < 1;
 
     const isChecked = selectedTags.includes(path);
 
@@ -495,7 +497,7 @@ function buildTagNode(name, children, parentPath, depth) {
     const row = createEl('div', {
         class: `tree-node-row ${isChecked ? 'checked' : ''}`,
     });
-    row.style.paddingLeft = `${10 + depth * 20}px`;
+    row.style.paddingLeft = `${12 + depth * 28}px`;
 
     // 箭头
     const arrow = createEl('span', {

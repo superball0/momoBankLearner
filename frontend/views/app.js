@@ -2,6 +2,7 @@ import { renderHome } from './home.js';
 import { renderModeSelect } from './mode-select.js';
 import { renderEntry } from './entry.js';
 import { renderTreeSelector } from './tree-selector.js';
+import { renderPractice } from './practice.js';
 import { api, base64ToBlob, showToast } from '/static/tools/utils.js';
 import { ImageAnnotator } from '/static/tools/image-annotator.js';
 
@@ -35,7 +36,7 @@ class App {
                 case 'mode-select': renderModeSelect(this); break;
                 case 'entry': renderEntry(this); break;
                 case 'tree-selector': renderTreeSelector(this); break;
-                case 'practice': this._renderPractice(); break;
+                case 'practice': renderPractice(this); break;
             }
             this.container.classList.remove('view-exit');
             this.container.classList.add('view-enter');
@@ -43,16 +44,7 @@ class App {
         }, 150);
     }
 
-    _renderPractice() {
-        this.container.innerHTML = `
-            <div class="page-center">
-                <h1>🧠 刷题模式</h1>
-                <p class="text-muted">刷题功能将在后续版本中实现</p>
-                <p class="text-muted">计划支持：按分支/Tag筛选 · 限时刷题 · 错题本 · 随机模式</p>
-                <button class="btn btn-secondary" onclick="window.__app.navigate('mode-select')">← 返回</button>
-            </div>
-        `;
-    }
+
 
     /** Global screenshot shortcut: Ctrl+Shift+A — works on ALL pages */
     _bindGlobalShortcut() {
