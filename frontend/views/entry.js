@@ -1106,37 +1106,44 @@ export function renderEntry(app) {
             type: optionTypes[i] || 'text',
             content: opt.text || '',
         }));
+        // 4. Determine effective option_mode
+        // If in 'text' mode but some options have images, use 'split_images'
+        let effectiveOptionMode = optionMode;
+        if (optionMode === 'text') {
+            const hasImageOptions = optionTypes.some(t => t === 'image');
+            if (hasImageOptions) {
+                effectiveOptionMode = 'split_images';
+            }
+        }
 
-        // 4. Build FormData (mirroring tree-selector confirmSave)
+        // 5. Build FormData (must match backend field names exactly)
         const fd = new FormData();
         fd.append('branch_path', selectedBranch);
         fd.append('question_type', questionType);
         fd.append('question_content', qContent.text || '');
-        fd.append('option_mode', optionMode);
+        fd.append('option_mode', effectiveOptionMode);
         fd.append('options_json', JSON.stringify(optionList));
         fd.append('answer_type', answerType);
         fd.append('answer_content', aContent.text || '');
-        fd.append('correct_indices', JSON.stringify(correctIndices));
-        fd.append('tags', JSON.stringify(selectedTags));
+        fd.append('correct_indices_json', JSON.stringify(correctIndices));
+        fd.append('tags_json', JSON.stringify(selectedTags));
 
-        // Question images
-        if (qContent.images) {
-            qContent.images.forEach((blob, i) => {
-                fd.append('question_images', blob, `q_img_${i}.png`);
-            });
+        // Question image (backend expects single 'question_image')
+        if (qContent.images && qContent.images.length > 0) {
+            fd.append('question_image', qContent.images[0], 'question.png');
         }
-        // Answer images
-        if (aContent.images) {
-            aContent.images.forEach((blob, i) => {
-                fd.append('answer_images', blob, `a_img_${i}.png`);
-            });
+        // Answer image (backend expects single 'answer_image')
+        if (aContent.images && aContent.images.length > 0) {
+            fd.append('answer_image', aContent.images[0], 'answer.png');
         }
-        // Option images (text-mode per-option images and split_images)
-        for (const [label, blob] of Object.entries(optionImages)) {
-            fd.append('option_images', blob, `opt_${label}.png`);
-        }
+        // Option images
         if (optionMode === 'single_image' && singleOptionImage) {
-            fd.append('option_images', singleOptionImage, 'opt_single.png');
+            fd.append('options_image', singleOptionImage, 'options.png');
+        } else {
+            // Per-option images: map to option_A, option_B, etc.
+            for (const [label, blob] of Object.entries(optionImages)) {
+                fd.append(`option_${label}`, blob, `option_${label}.png`);
+            }
         }
 
         // 5. POST
