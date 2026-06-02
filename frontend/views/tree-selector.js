@@ -9,6 +9,90 @@
 
 import { api, createEl, showToast } from '/static/tools/utils.js';
 
+// ── 样式注入 ──────────────────────────────────────────────
+function injectStyles() {
+    if (document.getElementById('tree-selector-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'tree-selector-styles';
+    style.textContent = `
+        /* ── Context Menu ─────────────────────────────── */
+        .tree-context-menu {
+            position: fixed;
+            z-index: 2000;
+            background: var(--surface-raised);
+            border: 1px solid var(--border-light);
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow-lg);
+            min-width: 160px;
+            padding: 4px 0;
+            animation: fadeIn 0.12s ease;
+        }
+
+        .tree-context-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            font-size: 14px;
+            color: var(--text);
+            cursor: pointer;
+            transition: background 0.15s;
+            user-select: none;
+        }
+
+        .tree-context-item:hover {
+            background: var(--surface-hover);
+        }
+
+        .tree-context-item.danger {
+            color: var(--accent);
+        }
+
+        .tree-context-item.danger:hover {
+            background: rgba(233, 69, 96, 0.1);
+        }
+
+        .tree-context-sep {
+            height: 1px;
+            background: var(--border);
+            margin: 4px 0;
+        }
+
+        /* ── Inline rename input ──────────────────────── */
+        .tree-inline-rename {
+            flex: 1;
+            min-width: 0;
+            padding: 2px 6px;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            color: var(--text);
+            font-family: var(--font);
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .tree-inline-rename:focus {
+            background: var(--bg);
+            border-color: var(--border-focus);
+            box-shadow: 0 0 0 2px rgba(83, 52, 131, 0.15);
+        }
+
+        /* ── Row height override ──────────────────────── */
+        .tree-node-row {
+            min-height: 40px;
+            padding: 8px 12px !important;
+            font-size: 14px;
+        }
+
+        .tree-label {
+            font-size: 14px;
+        }
+    `;
+    document.head.appendChild(style);
+}
+
 // ── 本地状态 ──────────────────────────────────────────────
 let selectedBranch = null;   // 选中分支的 path
 let selectedTags = [];       // 选中标签 path 的数组
@@ -20,6 +104,133 @@ let branchTreeBody = null;
 let tagTreeBody = null;
 let statusBarEl = null;
 
+// 当前活跃的上下文菜单
+let activeContextMenu = null;
+
+// ── 上下文菜单管理 ────────────────────────────────────────
+function closeContextMenu() {
+    if (activeContextMenu) {
+        activeContextMenu.remove();
+        activeContextMenu = null;
+    }
+}
+
+function showContextMenu(e, items) {
+    e.preventDefault();
+    e.stopPropagation();
+    closeContextMenu();
+
+    const menu = createEl('div', { class: 'tree-context-menu' });
+
+    for (const item of items) {
+        if (item.separator) {
+            menu.appendChild(createEl('div', { class: 'tree-context-sep' }));
+            continue;
+        }
+        const menuItem = createEl('div', {
+            class: `tree-context-item ${item.danger ? 'danger' : ''}`,
+            textContent: item.label,
+        });
+        menuItem.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            closeContextMenu();
+            item.action();
+        });
+        menu.appendChild(menuItem);
+    }
+
+    document.body.appendChild(menu);
+    activeContextMenu = menu;
+
+    // 定位（避免溢出屏幕）
+    const rect = menu.getBoundingClientRect();
+    let x = e.clientX;
+    let y = e.clientY;
+    if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 8;
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
+    if (x < 0) x = 8;
+    if (y < 0) y = 8;
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+
+    // 点击其他地方关闭
+    const onClickOutside = () => {
+        closeContextMenu();
+        document.removeEventListener('click', onClickOutside, true);
+        document.removeEventListener('contextmenu', onContextOutside, true);
+    };
+    const onContextOutside = (ev) => {
+        if (!menu.contains(ev.target)) {
+            closeContextMenu();
+            document.removeEventListener('click', onClickOutside, true);
+            document.removeEventListener('contextmenu', onContextOutside, true);
+        }
+    };
+    // 延迟绑定，避免当前事件立即触发
+    requestAnimationFrame(() => {
+        document.addEventListener('click', onClickOutside, true);
+        document.addEventListener('contextmenu', onContextOutside, true);
+    });
+}
+
+// ── 内联重命名辅助 ────────────────────────────────────────
+function startInlineRename(row, labelSpan, currentName, onConfirm) {
+    // 避免重复触发
+    if (row.querySelector('.tree-inline-rename')) return;
+
+    const input = document.createElement('input');
+    input.className = 'tree-inline-rename';
+    input.type = 'text';
+    input.value = currentName;
+
+    // 替换 label
+    labelSpan.style.display = 'none';
+    labelSpan.parentNode.insertBefore(input, labelSpan.nextSibling);
+
+    input.focus();
+    input.select();
+
+    let committed = false;
+
+    const commit = () => {
+        if (committed) return;
+        committed = true;
+        const newName = input.value.trim();
+        input.remove();
+        labelSpan.style.display = '';
+        if (newName && newName !== currentName) {
+            onConfirm(newName);
+        }
+    };
+
+    const cancel = () => {
+        if (committed) return;
+        committed = true;
+        input.remove();
+        labelSpan.style.display = '';
+    };
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            commit();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancel();
+        }
+    });
+
+    input.addEventListener('blur', () => {
+        // 短暂延迟，以便 Enter keydown 先执行
+        setTimeout(() => {
+            if (!committed) cancel();
+        }, 100);
+    });
+
+    // 阻止点击冒泡到 row
+    input.addEventListener('click', (e) => e.stopPropagation());
+}
+
 // ══════════════════════════════════════════════════════════
 //  主入口
 // ══════════════════════════════════════════════════════════
@@ -29,6 +240,8 @@ let statusBarEl = null;
  * @param {object} app - 应用实例，需要 app.container / app.state / app.navigate
  */
 export function renderTreeSelector(app) {
+    injectStyles();
+
     // 恢复上次选择（如果有）
     selectedBranch = app.state.selectedBranch || null;
     selectedTags = app.state.selectedTags ? [...app.state.selectedTags] : [];
@@ -65,11 +278,6 @@ export function renderTreeSelector(app) {
             textContent: '➕ 新建子分支',
             events: { click: () => createBranch(app) },
         }),
-        createEl('button', {
-            class: 'btn btn-sm',
-            textContent: '📝 重命名',
-            events: { click: () => renameBranchSelected(app) },
-        }),
     ]);
     branchPanel.appendChild(branchActions);
     content.appendChild(branchPanel);
@@ -91,11 +299,6 @@ export function renderTreeSelector(app) {
             class: 'btn btn-sm',
             textContent: '➕ 新建 Tag',
             events: { click: () => createTag(app) },
-        }),
-        createEl('button', {
-            class: 'btn btn-sm',
-            textContent: '📝 重命名 Tag',
-            events: { click: () => renameTagSelected(app) },
         }),
     ]);
     tagPanel.appendChild(tagActions);
@@ -195,33 +398,34 @@ function buildBranchNode(node, depth) {
     row.appendChild(createEl('span', { class: 'tree-icon', textContent: '📁' }));
 
     // 名称
-    row.appendChild(createEl('span', { class: 'tree-label', textContent: node.name }));
+    const labelSpan = createEl('span', { class: 'tree-label', textContent: node.name });
+    row.appendChild(labelSpan);
 
-    // 行内操作（hover 显示）
-    const actions = createEl('div', { class: 'tree-node-actions' });
-    actions.appendChild(createEl('button', {
-        class: 'tree-node-action-btn',
-        textContent: '✏',
-        title: '重命名',
-        events: {
-            click: (e) => {
-                e.stopPropagation();
-                promptRenameBranch(node);
+    // 右键上下文菜单
+    row.addEventListener('contextmenu', (e) => {
+        showContextMenu(e, [
+            {
+                label: '📝 重命名',
+                action: () => {
+                    startInlineRename(row, labelSpan, node.name, async (newName) => {
+                        await doRenameBranch(node, newName);
+                    });
+                },
             },
-        },
-    }));
-    actions.appendChild(createEl('button', {
-        class: 'tree-node-action-btn',
-        textContent: '+',
-        title: '新建子分支',
-        events: {
-            click: (e) => {
-                e.stopPropagation();
-                promptCreateBranch(node.path);
+            {
+                label: '➕ 新建子分支',
+                action: () => promptCreateBranch(node.path),
             },
-        },
-    }));
-    row.appendChild(actions);
+            { separator: true },
+            {
+                label: '🗑 删除',
+                danger: true,
+                action: () => {
+                    showToast('分支删除功能即将推出 (coming soon)', 'error');
+                },
+            },
+        ]);
+    });
 
     // 点击处理
     row.addEventListener('click', (e) => {
@@ -234,6 +438,9 @@ function buildBranchNode(node, depth) {
             }
             return;
         }
+        // 跳过内联重命名输入的点击
+        if (e.target.classList.contains('tree-inline-rename')) return;
+
         // 选中分支
         selectedBranch = node.path;
         // 更新所有行的高亮
@@ -305,33 +512,32 @@ function buildTagNode(name, children, parentPath, depth) {
     row.appendChild(checkbox);
 
     // 名称
-    row.appendChild(createEl('span', { class: 'tree-label', textContent: name }));
+    const labelSpan = createEl('span', { class: 'tree-label', textContent: name });
+    row.appendChild(labelSpan);
 
-    // 行内操作
-    const actions = createEl('div', { class: 'tree-node-actions' });
-    actions.appendChild(createEl('button', {
-        class: 'tree-node-action-btn',
-        textContent: '✏',
-        title: '重命名',
-        events: {
-            click: (e) => {
-                e.stopPropagation();
-                promptRenameTag(path, name);
+    // 右键上下文菜单
+    row.addEventListener('contextmenu', (e) => {
+        showContextMenu(e, [
+            {
+                label: '📝 重命名',
+                action: () => {
+                    startInlineRename(row, labelSpan, name, async (newName) => {
+                        await doRenameTag(path, name, newName);
+                    });
+                },
             },
-        },
-    }));
-    actions.appendChild(createEl('button', {
-        class: 'tree-node-action-btn',
-        textContent: '+',
-        title: '新建子标签',
-        events: {
-            click: (e) => {
-                e.stopPropagation();
-                promptCreateTag(path);
+            {
+                label: '➕ 新建子标签',
+                action: () => promptCreateTag(path),
             },
-        },
-    }));
-    row.appendChild(actions);
+            { separator: true },
+            {
+                label: '🗑 删除',
+                danger: true,
+                action: () => confirmDeleteTag(path),
+            },
+        ]);
+    });
 
     // 点击处理
     row.addEventListener('click', (e) => {
@@ -343,6 +549,9 @@ function buildTagNode(name, children, parentPath, depth) {
             }
             return;
         }
+        // 跳过内联重命名输入的点击
+        if (e.target.classList.contains('tree-inline-rename')) return;
+
         // 切换选中状态
         const idx = selectedTags.indexOf(path);
         if (idx >= 0) {
@@ -429,35 +638,7 @@ async function promptCreateBranch(parentPath) {
     }
 }
 
-async function renameBranchSelected(app) {
-    if (!selectedBranch) {
-        showToast('请先选择一个分支', 'error');
-        return;
-    }
-    // 从 path 中提取当前名称
-    const parts = selectedBranch.split('/');
-    const oldName = parts[parts.length - 1] || selectedBranch;
-    const newName = prompt('输入新名称:', oldName);
-    if (!newName || newName === oldName) return;
-    try {
-        await api('PUT', '/api/branch/rename', {
-            old_path: selectedBranch,
-            new_name: newName,
-        });
-        // 更新选中路径
-        parts[parts.length - 1] = newName;
-        selectedBranch = parts.join('/');
-        await loadBranches();
-        updateStatusBar();
-        showToast('已重命名', 'success');
-    } catch (err) {
-        showToast('重命名失败: ' + err.message, 'error');
-    }
-}
-
-async function promptRenameBranch(node) {
-    const newName = prompt('输入新名称:', node.name);
-    if (!newName || newName === node.name) return;
+async function doRenameBranch(node, newName) {
     try {
         await api('PUT', '/api/branch/rename', {
             old_path: node.path,
@@ -502,42 +683,7 @@ async function promptCreateTag(parentPath) {
     }
 }
 
-async function renameTagSelected(app) {
-    if (selectedTags.length === 0) {
-        showToast('请先选择一个标签', 'error');
-        return;
-    }
-    const oldPath = selectedTags[selectedTags.length - 1];
-    const parts = oldPath.split('/');
-    const oldName = parts[parts.length - 1];
-    const newName = prompt('输入新名称:', oldName);
-    if (!newName || newName === oldName) return;
-    try {
-        await api('PUT', '/api/tag/rename', {
-            old_path: oldPath,
-            new_name: newName,
-        });
-        // 更新 selectedTags 中相关路径
-        selectedTags = selectedTags.map((t) => {
-            if (t === oldPath || t.startsWith(oldPath + '/')) {
-                const p = oldPath.split('/');
-                p[p.length - 1] = newName;
-                const newBase = p.join('/');
-                return t === oldPath ? newBase : newBase + t.slice(oldPath.length);
-            }
-            return t;
-        });
-        await loadTags();
-        updateStatusBar();
-        showToast('已重命名', 'success');
-    } catch (err) {
-        showToast('重命名失败: ' + err.message, 'error');
-    }
-}
-
-async function promptRenameTag(oldPath, oldName) {
-    const newName = prompt('输入新名称:', oldName);
-    if (!newName || newName === oldName) return;
+async function doRenameTag(oldPath, oldName, newName) {
     try {
         await api('PUT', '/api/tag/rename', {
             old_path: oldPath,
@@ -558,6 +704,23 @@ async function promptRenameTag(oldPath, oldName) {
         showToast('已重命名', 'success');
     } catch (err) {
         showToast('重命名失败: ' + err.message, 'error');
+    }
+}
+
+async function confirmDeleteTag(path) {
+    const ok = confirm(`确认删除标签「${path}」？此操作不可撤销。`);
+    if (!ok) return;
+    try {
+        await api('DELETE', '/api/tag', { path });
+        // 从 selectedTags 中移除被删除的 tag 及其子 tag
+        selectedTags = selectedTags.filter(
+            (t) => t !== path && !t.startsWith(path + '/'),
+        );
+        await loadTags();
+        updateStatusBar();
+        showToast('标签已删除', 'success');
+    } catch (err) {
+        showToast('删除标签失败: ' + err.message, 'error');
     }
 }
 

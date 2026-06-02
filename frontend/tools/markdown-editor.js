@@ -185,6 +185,29 @@ export class MarkdownEditor {
             }
         };
         this.editable.addEventListener('copy', this._onCopy);
+
+        // Cut: same as copy but also stores to internal clipboard
+        this._onCut = (e) => {
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed) return;
+            const range = sel.getRangeAt(0);
+            const frag = range.cloneContents();
+            const imgs = frag.querySelectorAll('img');
+            if (imgs.length === 0) return; // default text cut is fine
+            // Store images in internal clipboard for cross-editor paste
+            for (const img of imgs) {
+                const imgId = img.dataset.imgId;
+                const blob = imgId ? this.imageStore.get(imgId) : null;
+                if (blob) {
+                    _internalClipboard = { blob, timestamp: Date.now() };
+                    // Also store globally for option textareas
+                    window.__pendingScreenshotBlob = blob;
+                    break;
+                }
+            }
+            // Let the browser handle the actual cut (delete selected content)
+        };
+        this.editable.addEventListener('cut', this._onCut);
     }
 
     /** Show context menu for image right-click */
@@ -248,6 +271,8 @@ export class MarkdownEditor {
 
             // Always store in internal clipboard (works reliably)
             _internalClipboard = { blob: blob, timestamp: Date.now() };
+            // Also store globally for option textareas
+            window.__pendingScreenshotBlob = blob;
 
             // Try system clipboard too (may fail in pywebview)
             try {
@@ -461,50 +486,45 @@ export class MarkdownEditor {
 
     // ── Paste handling ────────────────────────────────────
     _handlePaste(e) {
-        // 1. Check internal clipboard first (from right-click copy)
-        if (_internalClipboard && (Date.now() - _internalClipboard.timestamp < 300000)) {
-            const items = e.clipboardData?.items;
-            // If system clipboard has no image, use internal
-            let hasSystemImage = false;
-            if (items) {
-                for (const item of items) {
-                    if (item.type.startsWith('image/')) {
-                        hasSystemImage = true;
-                        break;
-                    }
-                }
-            }
-            if (!hasSystemImage) {
-                e.preventDefault();
-                this.insertImage(_internalClipboard.blob);
-                _internalClipboard = null;
-                const { showToast } = { showToast: (msg) => {} };
-                import('/static/tools/utils.js').then(m => m.showToast('图片已粘贴', 'success', 1000));
-                return;
-            }
-        }
-
         const items = e.clipboardData?.items;
-        if (!items) return;
 
-        // 2. Check system clipboard for images
-        for (const item of items) {
-            if (item.type.startsWith('image/')) {
-                e.preventDefault();
-                const blob = item.getAsFile();
-                if (blob) {
-                    this.insertImage(blob);
-                    if (this.opts.onImagePaste) {
-                        this.opts.onImagePaste(blob);
+        // 1. System clipboard has image? Use it (works for normal copy-paste)
+        if (items) {
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    e.preventDefault();
+                    const blob = item.getAsFile();
+                    if (blob) {
+                        this.insertImage(blob);
+                        if (this.opts.onImagePaste) {
+                            this.opts.onImagePaste(blob);
+                        }
                     }
+                    return;
                 }
-                return;
             }
         }
 
-        // 3. For text paste, clean to plain text
+        // 2. Internal clipboard (from right-click copy within editor)
+        if (_internalClipboard && (Date.now() - _internalClipboard.timestamp < 300000)) {
+            e.preventDefault();
+            this.insertImage(_internalClipboard.blob);
+            import('/static/tools/utils.js').then(m => m.showToast('图片已粘贴', 'success', 1000));
+            return;
+        }
+
+        // 3. Pending screenshot blob (fallback when clipboard API fails)
+        if (window.__pendingScreenshotBlob) {
+            e.preventDefault();
+            this.insertImage(window.__pendingScreenshotBlob);
+            // Don't clear - allow pasting to multiple locations
+            import('/static/tools/utils.js').then(m => m.showToast('图片已粘贴', 'success', 1000));
+            return;
+        }
+
+        // 4. Plain text paste
         e.preventDefault();
-        const text = e.clipboardData.getData('text/plain');
+        const text = e.clipboardData?.getData('text/plain') || '';
         document.execCommand('insertText', false, text);
     }
 
@@ -698,6 +718,7 @@ export class MarkdownEditor {
         this.editable.removeEventListener('input', this._onInput);
         this.editable.removeEventListener('keydown', this._onKeydown);
         this.editable.removeEventListener('paste', this._onPaste);
+        this.editable.removeEventListener('cut', this._onCut);
         this.clear();
     }
 }

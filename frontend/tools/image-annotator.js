@@ -112,13 +112,16 @@ export class ImageAnnotator {
 
         // Canvas wrapper
         const canvasWrap = createEl('div', { class: 'annotator-canvas-wrap' });
+        const dpr = window.devicePixelRatio || 1;
         this.canvas = createEl('canvas', {
-            width: this.displayW,
-            height: this.displayH,
+            width: Math.round(this.displayW * dpr),
+            height: Math.round(this.displayH * dpr),
         });
         this.canvas.style.width = this.displayW + 'px';
         this.canvas.style.height = this.displayH + 'px';
         this.ctx = this.canvas.getContext('2d');
+        this.ctx.scale(dpr, dpr);
+        this.dpr = dpr;
         canvasWrap.appendChild(this.canvas);
         this.canvasWrap = canvasWrap;
         this.overlay.appendChild(canvasWrap);
@@ -127,6 +130,26 @@ export class ImageAnnotator {
 
         // Prevent body scroll
         document.body.style.overflow = 'hidden';
+
+        // Keyboard shortcuts: Enter = confirm, Escape = cancel
+        this._onKeyDown = (e) => {
+            if (e.key === 'Enter' && !this._textPanel) {
+                e.preventDefault();
+                this._confirm();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                if (this._textPanel) {
+                    this._removeTextPanel();
+                } else {
+                    this._cancel();
+                }
+            } else if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedAnnotation) {
+                this.annotations = this.annotations.filter(a => a !== this.selectedAnnotation);
+                this.selectedAnnotation = null;
+                this._render();
+            }
+        };
+        document.addEventListener('keydown', this._onKeyDown);
     }
 
     _buildToolbar() {
@@ -692,6 +715,7 @@ export class ImageAnnotator {
         }
 
         document.body.style.overflow = '';
+        document.removeEventListener('keydown', this._onKeyDown);
         this.annotations = [];
         this.selectedAnnotation = null;
         this.originalImage = null;
