@@ -3,9 +3,6 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.egg-info/
-dist/
-build/
-*.spec
 
 # uv / venv
 .venv/
@@ -25,13 +22,19 @@ Thumbs.db
 *.swp
 *.swo
 
-# 历史记录（本地配置）
+# 历史记录（运行时生成）
 .history.json
 
 # PyInstaller 打包产物
 dist/
 build/
+*.spec
 
-# 旧的 tkinter 文件（已弃用）
+# 旧的 tkinter 文件（v0.1 已弃用）
+/cache.py
 screenshot_tool.py
+markdown_editor.py
 image_annotator.py
+
+# Antigravity CLI 对话记录
+.antigravitycli/
